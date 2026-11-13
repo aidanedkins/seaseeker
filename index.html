@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Seaseeker</title>
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="description" content="Seaseeker - a crew-based pirate adventure on the open sea.">
+    <meta name="theme-color" content="#0b2a3f">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Seaseeker">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" type="image/png" sizes="48x48" href="TemplateData/icons/favicon-48.png">
+    <link rel="apple-touch-icon" href="TemplateData/icons/apple-touch-icon.png">
+    <link rel="preload" href="TemplateData/PirataOne-Regular.ttf" as="font" type="font/ttf" crossorigin>
+    <link rel="stylesheet" href="TemplateData/style.css">
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+
+    <!-- HTML title / loading screen, shown while the game downloads -->
+    <div id="loader">
+      <div class="stars"></div>
+      <div class="moon"></div>
+      <div class="title-wrap">
+        <h1 class="title">Seaseeker</h1>
+        <p class="tagline">Chart the seas &middot; Gather a crew &middot; Seek the horizon</p>
+        <div class="bar"><div class="bar-fill" id="bar-fill"></div></div>
+        <p class="status" id="status">Charting the seas&hellip;</p>
+      </div>
+      <svg class="ship" viewBox="0 0 200 160" aria-hidden="true">
+        <path d="M100 8 L100 112" stroke="#3b2a1a" stroke-width="5"/>
+        <path d="M100 14 Q150 40 104 78 Z" fill="#efe3c4"/>
+        <path d="M96 24 Q50 52 96 92 Z" fill="#e4d6b2"/>
+        <path d="M100 4 L124 10 L100 16 Z" fill="#c8483a"/>
+        <path d="M24 108 L176 108 L156 138 L44 138 Z" fill="#4a3220"/>
+        <path d="M24 108 L176 108 L172 116 L28 116 Z" fill="#6b4a2e"/>
+      </svg>
+      <div class="waves">
+        <svg class="wave w1" viewBox="0 0 1200 120" preserveAspectRatio="none"><path d="M0 60 Q150 20 300 60 T600 60 T900 60 T1200 60 V120 H0 Z"/></svg>
+        <svg class="wave w2" viewBox="0 0 1200 120" preserveAspectRatio="none"><path d="M0 60 Q150 100 300 60 T600 60 T900 60 T1200 60 V120 H0 Z"/></svg>
+        <svg class="wave w3" viewBox="0 0 1200 120" preserveAspectRatio="none"><path d="M0 70 Q150 30 300 70 T600 70 T900 70 T1200 70 V120 H0 Z"/></svg>
+      </div>
+      <div class="version">v0.1.1</div>
+    </div>
+
+    <div id="rotate">
+      <div class="rotate-icon"></div>
+      <p>Turn your device sideways to play</p>
+    </div>
+
+    <div id="error" hidden></div>
+
+    <script>
+      (function () {
+        var canvas = document.getElementById("unity-canvas");
+        var loader = document.getElementById("loader");
+        var barFill = document.getElementById("bar-fill");
+        var statusEl = document.getElementById("status");
+        var errorEl = document.getElementById("error");
+        var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+                       (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        var isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+                    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        var isStandalone = window.matchMedia("(display-mode: standalone)").matches ||
+                           window.matchMedia("(display-mode: fullscreen)").matches ||
+                           window.navigator.standalone === true;
+
+        // ---------- Service worker (offline cache + installable PWA) ----------
+        if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+          window.addEventListener("load", function () {
+            navigator.serviceWorker.register("ServiceWorker.js").catch(function (e) {
+              console.warn("Service worker registration failed", e);
+            });
+          });
+        }
+
+        // ---------- Install (Add to Home Screen) bridge used by Unity ----------
+        var deferredPrompt = null;
+        window.addEventListener("beforeinstallprompt", function (e) {
+          e.preventDefault();
+          deferredPrompt = e;
+        });
+        window.addEventListener("appinstalled", function () {
+          deferredPrompt = null;
+          isStandalone = true;
+        });
+        // 0 = nothing to offer, 1 = native prompt available, 2 = show iOS "Share > Add to Home Screen" hint, 3 = already installed
+        window.seaseekerInstallState = function () {
+          if (isStandalone) return 3;
+          if (deferredPrompt) return 1;
+          if (isIOS) return 2;
+          return 0;
+        };
+        window.seaseekerPromptInstall = function () {
+          if (!deferredPrompt) return;
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice.finally(function () { deferredPrompt = null; });
+        };
+
+        // ---------- Fullscreen + landscape lock on first touch (mobile) ----------
+        function tryFullscreen() {
+          if (!isMobile || isStandalone) return;
+          var el = document.documentElement;
+          var req = el.requestFullscreen || el.webkitRequestFullscreen;
+          if (!req || document.fullscreenElement || document.webkitFullscreenElement) return;
+          try {
+            var p = req.call(el, { navigationUI: "hide" });
+            if (p && p.then) {
+              p.then(function () {
+                if (screen.orientation && screen.orientation.lock) {
+                  screen.orientation.lock("landscape").catch(function () {});
+                }
+              }).catch(function () {});
+            }
+          } catch (e) { /* not supported (e.g. iPhone Safari) */ }
+        }
+        document.addEventListener("touchend", tryFullscreen, { passive: true });
+
+        // ---------- Loader screen ----------
+        var hidden = false;
+        window.seaseekerHideLoader = function () {
+          if (hidden) return;
+          hidden = true;
+          loader.classList.add("done");
+          setTimeout(function () { loader.style.display = "none"; }, 900);
+        };
+
+        var stages = [
+          [0.00, "Charting the seas…"],
+          [0.30, "Hoisting the sails…"],
+          [0.60, "Loading the cannons…"],
+          [0.85, "Setting course…"]
+        ];
+        function setProgress(p) {
+          barFill.style.width = Math.round(p * 100) + "%";
+          var msg = stages[0][1];
+          for (var i = 0; i < stages.length; i++) if (p >= stages[i][0]) msg = stages[i][1];
+          statusEl.textContent = msg + " " + Math.round(p * 100) + "%";
+        }
+
+        function showError(msg) {
+          errorEl.hidden = false;
+          errorEl.innerHTML = "<strong>The ship ran aground.</strong><br>" + msg +
+            "<br><br><button onclick=\"location.reload()\">Try again</button>";
+        }
+
+        function showBanner(msg, type) {
+          if (type === "error") showError(msg);
+          else console.warn(msg);
+        }
+
+        // ---------- Unity boot ----------
+        var buildUrl = "Build";
+        var config = {
+          arguments: [],
+          dataUrl: buildUrl + "/dc5e72ccf3a866335f3fc7fc58980e81.data.unityweb",
+          frameworkUrl: buildUrl + "/b7f705b0723f977f06379e59636037f8.framework.js.unityweb",
+          codeUrl: buildUrl + "/fd4636fe7150339b191b6028a78ca54d.wasm.unityweb",
+          streamingAssetsUrl: "StreamingAssets",
+          companyName: "Seaseeker",
+          productName: "Seaseeker",
+          productVersion: "0.1.1",
+          showBanner: showBanner
+        };
+        // Keep phones cool: cap the render resolution on high-DPI mobile screens.
+        if (isMobile) config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+
+        var script = document.createElement("script");
+        script.src = buildUrl + "/e05955fa9cd5161de8684e1d88d7a148.loader.js";
+        script.onload = function () {
+          createUnityInstance(canvas, config, setProgress).then(function (instance) {
+            window.seaseekerUnity = instance;
+            setProgress(1);
+            // Unity's title scene hides the loader once it has drawn; this is a safety net.
+            setTimeout(window.seaseekerHideLoader, 4000);
+          }).catch(function (message) {
+            showError(message);
+          });
+        };
+        script.onerror = function () { showError("Could not download the game files. Check your connection."); };
+        document.body.appendChild(script);
+      })();
+    </script>
+  </body>
+</html>
